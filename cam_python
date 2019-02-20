@@ -1,0 +1,113 @@
+                                                                                                                    1514/3843               39%import os, sys, time, shutil, logging, math, zipfile, smtplib
+from subprocess import call
+from logging.handlers import TimedRotatingFileHandler
+from datetime import datetime, timedelta
+from os.path import splitext
+
+# format the log entries
+formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+handler = TimedRotatingFileHandler('/home/pi/camera_archive.log', when='midnight', backupCount=10)
+handler.setFormatter(formatter)
+logger = logging.getLogger("Camera")
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+
+#----- Parameters -----
+
+now = time.time()
+cutoff = now - (2 * 86400)
+from_dir = "/home/pi/FI9800P_00626E683BE0/record"
+to_dir = "/media/externalhdd1/!camera_archive/"
+to_drive = "/media/externalhdd1/"
+
+#----- Parameters -----
+
+def send_mail(msg):
+    fromaddr = 'name@tld'
+    toaddrs  = fromaddr
+    # Credentials
+    password = '***password***'
+    # The actual mail send
+    server = smtplib.SMTP('smtp.gmail.com:587')
+    server.starttls()
+    server.login(fromaddr,password)
+    server.sendmail(fromaddr, toaddrs, msg)
+    server.quit()
+
+def get_size(start_path):
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(start_path):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            total_size += os.path.getsize(fp)
+    return total_size
+
+def Notification():
+    a = get_size(to_dir)
+    if a>16106127360: #15GB
+      msg = "Celkonyvtar merete: " + str(convert_size(a))
+      send_mail(msg)
+
+def convert_size(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return "%s %s" % (s, size_name[i])
+
+def ZipName(file_name):
+    today = time.strftime('%Y%m%d', time.gmtime(os.path.getmtime(os.path.join(from_dir, file_name))))
+    files = sorted(os.listdir(to_dir))
+    zip_arr = []
+    for xfile in files:
+      file = str(to_dir) + xfile
+      if os.path.isfile(file):
+        extension = os.path.splitext(file)[1]
+        archive_day = xfile.split('_')[0]
+        if extension == ".zip" and archive_day == today:
+          zip_arr.append(xfile)
+    if len(zip_arr)>0:
+      zip_arr.sort(reverse=True)
+      lastfile = zip_arr[0]
+      t = os.stat(str(to_dir) + lastfile)
+      c = t.st_size
+      if c<1073741824: #1GB
+        filename = lastfile
+      else:
+        filename = str(today) + '_' + str('{0:03}'.format((len(zip_arr)+1))) +'_cameraarchive.zip'
+    else:
+      filename = str(today) + '_001_cameraarchive.zip'
+    #t = os.stat(str(to_dir) + filename)
+    #c = t.st_size
+    #logger.debug("archive: " + str(filename) + "--" + str(convert_size(c)))
+    return str(filename)
+
+def MoveFileToZip(file_name):
+    from_filepath = os.path.join(from_dir, file_name)
+    zzz = ZipName(file_name)
+    zipz = zipfile.ZipFile((os.path.join(to_dir, zzz)), 'a', zipfile.ZIP_DEFLATED)
+    zipz.write(from_filepath, arcname=file_name)
+    zipz.close()
+    t = os.stat(from_filepath)
+    c = t.st_size
+    logger.debug("archive: " + str(file_name) + "--" + str(convert_size(c)))
+    os.remove(from_filepath)
+
+def MoveFile():
+    files = sorted(os.listdir(from_dir))
+    fc = 1
+    for xfile in files:
+      file = os.path.join(from_dir, xfile)
+      if os.path.isfile(file):
+        t = os.stat(file)
+        if t.st_mtime < cutoff: # move file if older than 2 days
+          logger.debug("---- " + str(fc) + " file process in this session ----")
+          MoveFileToZip(xfile)
+          logger.debug("moved: " + str(xfile) + " file")
+          fc+=1
+logger.debug("--------------------------Start!--------------------------")
+MoveFile()
+Notification()
+logger.debug("--------------------------End!--------------------------")
